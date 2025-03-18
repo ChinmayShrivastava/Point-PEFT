@@ -124,6 +124,8 @@ class Group(nn.Module):  # FPS + KNN
             ---------------------------
             output: B G M 3
             center : B G 3
+            idx : B G M
+            center_idx : B G
         '''
         batch_size, num_points, _ = xyz.shape
         # fps the centers out
@@ -224,8 +226,26 @@ class Attention1(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, dim, num_heads, mlp_ratio=4., qkv_bias=False, qk_scale=None, drop=0., attn_drop=0.,
-                 drop_path=0., act_layer=nn.GELU, norm_layer=nn.LayerNorm, adapter_dim=None, drop_rate_adapter=None, num_tokens=None, if_third=False, if_half=False, if_two=False, if_one=False):
+    def __init__(
+        self, 
+        dim, 
+        num_heads, 
+        mlp_ratio=4., 
+        qkv_bias=False, 
+        qk_scale=None, 
+        drop=0., 
+        attn_drop=0.,
+        drop_path=0., 
+        act_layer=nn.GELU, 
+        norm_layer=nn.LayerNorm, 
+        adapter_dim=None, 
+        drop_rate_adapter=None, 
+        num_tokens=None, 
+        if_third=False, 
+        if_half=False, 
+        if_two=False, 
+        if_one=False
+    ):
         super().__init__()
         self.norm1 = norm_layer(dim)
         if if_third:
@@ -306,11 +326,31 @@ class Block(nn.Module):
 
         return new_points
 
-    def forward(self, x, mask=None, center1=None, center2=None, neighborhood=None, idx=None, center_idx=None, num_group=None, group_size=None, cache_prompt=None, cp_conv=None, if_maxmean=None, pro_cof=None, center_cof=None,ad_cof=None, attn1=None, norm3=None,
-    layer_id=None):
+    def forward(
+        self, 
+        x, 
+        mask=None, 
+        center1=None, 
+        center2=None, 
+        neighborhood=None, 
+        idx=None, 
+        center_idx=None, 
+        num_group=None, 
+        group_size=None, 
+        cache_prompt=None, 
+        cp_conv=None, 
+        if_maxmean=None, 
+        pro_cof=None, 
+        center_cof=None, 
+        ad_cof=None, 
+        attn1=None, 
+        norm3=None, 
+        layer_id=None
+    ):
         # NOTE prompt with zero-inti attn
         B, G1, G2 = mask.shape
-        mask_new = torch.zeros([B,G1+self.num_tokens+1,G2+self.num_tokens+1]).cuda()
+        assert G1 == G2, f"Mask dimensions must match for self-attention, got {G1} and {G2}" # I added this line, if this throws an error during runtime later, remove it
+        mask_new = torch.zeros([B, G1+self.num_tokens+1, G2+self.num_tokens+1]).cuda()
         mask_new[:, self.num_tokens+1:, self.num_tokens+1:] = mask
 
         mask = mask_new # true:not contribute
@@ -383,8 +423,25 @@ class Block(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, embed_dim=768, depth=4, num_heads=12, mlp_ratio=4., qkv_bias=False, qk_scale=None,
-                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0., adapter_dim=1024., drop_rate_adapter=0, num_tokens=0., if_third=False, if_half=False, if_two=False, if_one=False):
+    def __init__(
+        self, 
+        embed_dim=768, # this is the encoding dimension which means the dimension of the input points
+        depth=4, # number of layers
+        num_heads=12, # number of attention heads
+        mlp_ratio=4., # ratio of mlp hidden dim to embedding dim
+        qkv_bias=False, # if True, add bias to qkv if False, no bias for qkv
+        qk_scale=None, # if None, use default qk_scale, if not None, use qk_scale
+        drop_rate=0., # dropout rate
+        attn_drop_rate=0., # attention dropout rate
+        drop_path_rate=0., # dropout rate for the drop path
+        adapter_dim=1024., # dimension of the adapter
+        drop_rate_adapter=0, # dropout rate for the adapter
+        num_tokens=0., # number of tokens
+        if_third=False, # if True, use the third layer of the transformer
+        if_half=False, # if True, use the half layer of the transformer
+        if_two=False, # if True, use the two layer of the transformer
+        if_one=False # if True, use the one layer of the transformer
+    ):
         super().__init__()
         self.pos_drop = nn.Dropout(p=drop_rate)
         self.blocks = nn.ModuleList([
@@ -400,13 +457,71 @@ class TransformerEncoder(nn.Module):
             embed_dim, num_heads=num_heads, qkv_bias=qkv_bias, qk_scale=qk_scale, attn_drop=attn_drop_rate, proj_drop=drop_rate)
         self.norm3 = nn.LayerNorm(embed_dim)
 
-    def forward(self, x, pos,mask=None, center=None, center2=None, neighborhood=None, idx=None, center_idx=None, num_group=None, group_size=None, cache_prompt=None, if_maxmean=None, pro_cof=None, center_cof=None, ad_cof=None, center_layer = None, center2_layer=None ,neighborhood_layer=None, idx_layer=None,center_idx_layer=None):
+    def forward(
+        self, 
+        x, 
+        pos, 
+        mask=None, 
+        center=None, 
+        center2=None, 
+        neighborhood=None, 
+        idx=None, 
+        center_idx=None, 
+        num_group=None, 
+        group_size=None, 
+        cache_prompt=None, 
+        if_maxmean=None, 
+        pro_cof=None, 
+        center_cof=None, 
+        ad_cof=None, 
+        center_layer=None, 
+        center2_layer=None, 
+        neighborhood_layer=None, 
+        idx_layer=None, 
+        center_idx_layer=None
+    ):
         for layer_id, block in enumerate(self.blocks):
             if layer_id<=5:
-                x,attn_weight = block(x + pos,mask, center,center2, neighborhood, idx, center_idx, num_group, group_size, cache_prompt=cache_prompt, if_maxmean=if_maxmean, pro_cof=pro_cof, center_cof=center_cof,ad_cof=ad_cof,  attn1=self.attn1, norm3=self.norm3, layer_id=layer_id)
+                x, attn_weight = block(
+                    x + pos, 
+                    mask, 
+                    center, 
+                    center2, 
+                    neighborhood, 
+                    idx, 
+                    center_idx, 
+                    num_group, 
+                    group_size, 
+                    cache_prompt=cache_prompt, 
+                    if_maxmean=if_maxmean, 
+                    pro_cof=pro_cof, 
+                    center_cof=center_cof, 
+                    ad_cof=ad_cof, 
+                    attn1=self.attn1, 
+                    norm3=self.norm3, 
+                    layer_id=layer_id
+                )
             else:
                 #x = block(x + pos,mask, center,center2, neighborhood, idx, center_idx, num_group, group_size, cache_prompt=cache_prompt, if_maxmean=if_maxmean, pro_cof=pro_cof, center_cof=center_cof,ad_cof=ad_cof,  attn1=self.attn1, norm3=self.norm3, layer_id=layer_id)
-                x,attn_weight = block(x + pos,mask, center_layer, center2_layer, neighborhood_layer, idx_layer, center_idx_layer, num_group, group_size, cache_prompt=cache_prompt, if_maxmean=if_maxmean, pro_cof=pro_cof, center_cof=center_cof,ad_cof=ad_cof,  attn1=self.attn1, norm3=self.norm3, layer_id=layer_id)
+                x,attn_weight = block(
+                    x + pos, 
+                    mask, 
+                    center_layer, 
+                    center2_layer, 
+                    neighborhood_layer, 
+                    idx_layer, 
+                    center_idx_layer, 
+                    num_group, 
+                    group_size, 
+                    cache_prompt=cache_prompt, 
+                    if_maxmean=if_maxmean, 
+                    pro_cof=pro_cof, 
+                    center_cof=center_cof, 
+                    ad_cof=ad_cof, 
+                    attn1=self.attn1, 
+                    norm3=self.norm3, 
+                    layer_id=layer_id
+                )
         return x,attn_weight
 
 
@@ -585,8 +700,11 @@ class PointTransformer_best(nn.Module):
         self.group_size = config.group_size
         self.num_group = config.num_group
         self.encoder_dims = config.encoder_dims
+        
+        # new add
         self.adapter_dim = config.adapter_config.adapter_dim
         self.drop_rate_adapter = config.adapter_config.adapter_drop_path_rate
+        #########################################################
 
         self.group_divider = Group(num_group=self.num_group, group_size=self.group_size)
 
@@ -707,12 +825,12 @@ class PointTransformer_best(nn.Module):
     def forward(self, pts, cache=False, cp_feat=None, args=None, label=None):
 
         neighborhood, center, idx, center_idx = self.group_divider(pts)
-        group_input_tokens = self.encoder(neighborhood)  # B G N
+        group_input_tokens = self.encoder(neighborhood)  # B G N where n is the encoding dimension
         #new_add
         prompt_cor = self.prompt_cor.repeat(pts.shape[0], 1, 1)
-        prompt_pts = torch.cat((prompt_cor, pts), dim=1)
-        neighborhood_prompt, center_prompt, idx_prompt, center_idx_prompt = self.group_divider(prompt_pts)
-        #neighborhood_prompt, center_prompt, idx_prompt, center_idx_prompt = neighborhood, center, idx, center_idx
+        prompt_pts = torch.cat((prompt_cor, pts), dim=1) # B N+10 3
+        neighborhood_prompt, center_prompt, idx_prompt, center_idx_prompt = self.group_divider(prompt_pts) # B G N where n is the encoding dimension
+        # neighborhood_prompt, center_prompt, idx_prompt, center_idx_prompt = neighborhood, center, idx, center_idx
         ####
         cls_tokens = self.cls_token.expand(group_input_tokens.size(0), -1, -1)
         cls_pos = self.cls_pos.expand(group_input_tokens.size(0), -1, -1)
@@ -725,8 +843,8 @@ class PointTransformer_best(nn.Module):
 
         xyz_dist = None
         if self.masking_radius > 0:
-                mask_radius, xyz_dist = self.compute_mask(center, self.masking_radius, xyz_dist)
-                mask_vis_att = mask_radius
+            mask_radius, xyz_dist = self.compute_mask(center, self.masking_radius, xyz_dist)
+            mask_vis_att = mask_radius
         else:
             mask_vis_att = None
         # transformer
@@ -739,23 +857,43 @@ class PointTransformer_best(nn.Module):
 
         cp_feat=cp_feat#[0]
         if cp_feat != None:
-                K = prompt_cor.shape[1] - 2 # kre
-                cp_feat_norm = cp_feat / cp_feat.norm(dim=-1, keepdim=True) #[B, 384]
-                new_knowledge = cp_feat_norm @ self.train_images_features_agg#.transpose(0,1) #[B, 11392]
-                new_knowledge_k, idx_k = torch.topk(new_knowledge, K) #[B, 2*K]
-                new_knowledge_k = F.softmax(new_knowledge_k, dim=1).unsqueeze(1)
-                train_features_k = []
-                for p in range(idx_k.shape[0]):
-                    train_features_k.append(self.train_images_features_agg[:, idx_k[p]].tolist())
-                #ipdb.set_trace()
-                train_features_k = torch.tensor(train_features_k).permute(0, 2, 1).cuda() #[B, K, 384].cuda()
-                feat_f = torch.matmul(new_knowledge_k, train_features_k) #[B, 1, 384]
+            K = prompt_cor.shape[1] - 2 # kre
+            cp_feat_norm = cp_feat / cp_feat.norm(dim=-1, keepdim=True) #[B, 384]
+            new_knowledge = cp_feat_norm @ self.train_images_features_agg#.transpose(0,1) #[B, 11392]
+            new_knowledge_k, idx_k = torch.topk(new_knowledge, K) #[B, 2*K]
+            new_knowledge_k = F.softmax(new_knowledge_k, dim=1).unsqueeze(1)
+            train_features_k = []
+            for p in range(idx_k.shape[0]):
+                train_features_k.append(self.train_images_features_agg[:, idx_k[p]].tolist())
+            #ipdb.set_trace()
+            train_features_k = torch.tensor(train_features_k).permute(0, 2, 1).cuda() #[B, K, 384].cuda()
+            feat_f = torch.matmul(new_knowledge_k, train_features_k) #[B, 1, 384]
 
-                cache_prompt = torch.cat((cp_feat.unsqueeze(1), feat_f, train_features_k), 1)
+            cache_prompt = torch.cat((cp_feat.unsqueeze(1), feat_f, train_features_k), 1)
         else:
             cache_prompt=None
         #x = self.blocks(x, pos, mask_vis_att, center, center2=center_new ,neighborhood=neighborhood, idx=idx,center_idx=center_idx, group_size=int(self.group_size/2), cp_feat=cp_feat,  if_maxmean=args.if_maxmean, pro_cof=args.propagate_cof, center_cof=args.center_cof, ad_cof=args.ad_cof)
-        x,attn_weight = self.blocks(x, pos, mask_vis_att, center_prompt, center2=center_new_prompt ,neighborhood=neighborhood_prompt, idx=idx_prompt,center_idx=center_idx_prompt, group_size=int(self.group_size/2), cache_prompt=cache_prompt,  if_maxmean=args.if_maxmean, pro_cof=args.propagate_cof, center_cof=args.center_cof, ad_cof=args.ad_cof, center_layer = center, center2_layer=center_new ,neighborhood_layer=neighborhood, idx_layer=idx,center_idx_layer=center_idx)
+        x, attn_weight = self.blocks(
+            x, 
+            pos, 
+            mask_vis_att, 
+            center_prompt, 
+            center2=center_new_prompt, 
+            neighborhood=neighborhood_prompt, 
+            idx=idx_prompt, 
+            center_idx=center_idx_prompt, 
+            group_size=int(self.group_size/2), 
+            cache_prompt=cache_prompt, 
+            if_maxmean=args.if_maxmean, 
+            pro_cof=args.propagate_cof, 
+            center_cof=args.center_cof, 
+            ad_cof=args.ad_cof, 
+            center_layer = center, 
+            center2_layer=center_new, 
+            neighborhood_layer=neighborhood, 
+            idx_layer=idx, 
+            center_idx_layer=center_idx
+        )
         x = self.norm(x)
         concat_f = torch.cat([x[:, 0], x[:, 1:].max(1)[0]], dim=-1)
 
